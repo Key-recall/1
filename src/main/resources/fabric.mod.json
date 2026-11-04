@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "itemframe-hud",
+  "version": "${version}",
+  "name": "Item Frame HUD",
+  "description": "Displays the name of the item held by the invisible item frame under your crosshair.",
+  "authors": [
+    "custom"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/itemframe-hud/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.example.itemframehud.ItemFrameHudMod"
+    ]
+  },
+  "mixins": [
+    "itemframe-hud.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
