@@ -1,7 +1,6 @@
 package com.example.itemframehud.hud;
 
 import com.example.itemframehud.config.ModConfig;
-import com.example.itemframehud.util.TextSerializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
@@ -20,9 +19,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 准星指向隐形展示框（含 GlowItemFrame，即发光展示框）时，
- * 在屏幕指定位置显示其承载物品名（带颜色）、可选完整 tooltip。
- * 位置、大小、背景透明度、tooltip、颜色均可通过配置界面调整。
+ * 准星指向隐形展示框（含发光展示框）时，显示其承载物品名。
+ * 直接使用 Text 对象渲染，完整保留服务端设定的颜色和格式。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
@@ -56,22 +54,11 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
 
         boolean showTooltip = cfg != null && cfg.showTooltip;
-        boolean showColor = cfg == null || cfg.showColor;
 
-        List<String> lines = new ArrayList<>();
-        // 第一行：名字（用最稳妥的方式获取文本）
-        String nameText;
-        try {
-            nameText = showColor ? TextSerializer.toLegacy(stack.getName()) : stack.getName().getString();
-        } catch (Throwable t) {
-            nameText = stack.getName().getString();
-        }
-        if (nameText == null || nameText.isEmpty()) {
-            nameText = stack.getName().getString();
-        }
-        lines.add(nameText);
+        // 用 Text 对象列表（保留颜色和格式）
+        List<Text> lines = new ArrayList<>();
+        lines.add(stack.getName());
 
-        // 可选：追加完整 tooltip 的后续行（lore、属性等）
         if (showTooltip) {
             try {
                 List<Text> tooltip = stack.getTooltip(
@@ -80,34 +67,19 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                         net.minecraft.item.tooltip.TooltipType.BASIC
                 );
                 for (int i = 1; i < tooltip.size(); i++) {
-                    lines.add(toDisplay(tooltip.get(i), showColor));
+                    lines.add(tooltip.get(i));
                 }
             } catch (Throwable t) {
-                // tooltip 失败就只用名字，不影响显示
+                // tooltip 失败就只用名字
             }
         }
 
         renderLabel(drawContext, client, lines, cfg);
     }
 
-    /** 根据 showColor 决定是否还原颜色代码 */
-    private String toDisplay(Text text, boolean showColor) {
-        if (showColor) {
-            try {
-                String colored = TextSerializer.toLegacy(text);
-                if (colored != null && !colored.isEmpty()) {
-                    return colored;
-                }
-            } catch (Throwable ignored) {
-            }
-        }
-        return text.getString();
-    }
-
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
         HitResult hit = client.crosshairTarget;
 
-        // 情况 1：准星直接命中实体（对 GlowItemFrame 也有效，因为它是 ItemFrameEntity 子类）
         if (hit != null && hit.getType() == HitResult.Type.ENTITY) {
             Entity entity = ((EntityHitResult) hit).getEntity();
             if (entity instanceof ItemFrameEntity frame) {
@@ -115,7 +87,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             }
         }
 
-        // 情况 2：命中方块，在命中点附近找展示框
         if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
             Vec3d hitPos = hit.getPos();
             ItemFrameEntity nearby = findNearestItemFrame(client, hitPos);
@@ -124,7 +95,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             }
         }
 
-        // 情况 3：沿视线方向扫描
         return raycastForItemFrame(client, player);
     }
 
@@ -186,8 +156,8 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         return closest.distanceTo(entityPos);
     }
 
-    /** 渲染带背景的标签，支持位置、透明度、多行 */
-    private void renderLabel(DrawContext context, MinecraftClient client, List<String> lines, ModConfig cfg) {
+    /** 渲染带背景的标签，直接渲染 Text 对象（保留颜色），支持位置、透明度、多行 */
+    private void renderLabel(DrawContext context, MinecraftClient client, List<Text> lines, ModConfig cfg) {
         if (lines.isEmpty()) {
             return;
         }
@@ -202,7 +172,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         int lineSpacing = (int) (2 * scale);
 
         int maxWidth = 0;
-        for (String line : lines) {
+        for (Text line : lines) {
             int w = client.textRenderer.getWidth(line);
             if (w > maxWidth) {
                 maxWidth = w;
@@ -220,10 +190,10 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         context.fill(x, y, x + boxWidth, y + boxHeight, bgColor);
 
         int textY = y + padding;
-        for (String line : lines) {
+        for (Text line : lines) {
             context.drawTextWithShadow(
                     client.textRenderer,
-                    Text.literal(line),
+                    line,
                     x + padding,
                     textY,
                     0xFFFFFFFF
