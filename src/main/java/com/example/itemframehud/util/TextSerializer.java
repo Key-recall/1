@@ -5,73 +5,105 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 
 /**
- * 把 Text 对象还原成带 § 颜色代码的字符串，以便 TextRenderer 渲染时保留颜色和格式。
+ * 把 Text 对象还原成带 § 颜色代码的字符串。
+ * 使用 Text.visit 正确遍历所有内容节点及其样式，避免文字重复。
+ * 支持精确 RGB 颜色（§x hex 代码）和标准格式代码。
  */
 public final class TextSerializer {
 
     private TextSerializer() {}
 
-    /** 把 Text 及其所有兄弟节点序列化为带 § 代码的字符串 */
+    /** 把 Text 及其所有内容节点序列化为带 § 代码的字符串 */
     public static String toLegacy(Text text) {
         StringBuilder sb = new StringBuilder();
-        append(text, sb);
+        final Style[] lastStyle = new Style[1];
+
+        text.visit((style, content) -> {
+            sb.append(styleDiff(lastStyle[0], style));
+            lastStyle[0] = style;
+            sb.append(content);
+            return java.util.Optional.empty();
+        }, Style.EMPTY);
+
         return sb.toString();
     }
 
-    private static void append(Text text, StringBuilder sb) {
-        // 先输出当前节点的样式代码
-        String styleCodes = styleToLegacy(text.getStyle());
-        sb.append(styleCodes);
-        // 输出文本内容
-        sb.append(text.getString());
-        // 递归处理兄弟节点（每个兄弟会重新输出自己的样式）
-        for (Text sibling : text.getSiblings()) {
-            append(sibling, sb);
+    /** 输出从 old 到 new 的样式差异 */
+    private static String styleDiff(Style old, Style newStyle) {
+        if (old == null) {
+            old = Style.EMPTY;
         }
-    }
-
-    /** 把 Style 转成 § 代码前缀（颜色 + 格式） */
-    private static String styleToLegacy(Style style) {
         StringBuilder codes = new StringBuilder();
-        if (style.getColor() != null) {
-            Formatting color = colorToFormatting(style.getColor().getRgb());
-            if (color != null) {
-                codes.append('§').append(color.getCode());
+
+        // 颜色变化
+        if (!java.util.Objects.equals(old.getColor(), newStyle.getColor())) {
+            if (newStyle.getColor() != null) {
+                codes.append(rgbToLegacy(newStyle.getColor().getRgb()));
+            } else {
+                codes.append("§r");
             }
         }
-        if (style.isBold()) codes.append("§l");
-        if (style.isItalic()) codes.append("§o");
-        if (style.isUnderlined()) codes.append("§n");
-        if (style.isStrikethrough()) codes.append("§m");
-        if (style.isObfuscated()) codes.append("§k");
+
+        // 格式变化
+        appendFormatChange(codes, old.isBold(), newStyle.isBold(), 'l');
+        appendFormatChange(codes, old.isItalic(), newStyle.isItalic(), 'o');
+        appendFormatChange(codes, old.isUnderlined(), newStyle.isUnderlined(), 'n');
+        appendFormatChange(codes, old.isStrikethrough(), newStyle.isStrikethrough(), 'm');
+        appendFormatChange(codes, old.isObfuscated(), newStyle.isObfuscated(), 'k');
+
         return codes.toString();
     }
 
-    /** 把 RGB 颜色近似映射到最接近的 Formatting 颜色代码 */
-    private static Formatting colorToFormatting(int rgb) {
+    private static void appendFormatChange(StringBuilder codes, boolean oldV, boolean newV, char code) {
+        if (oldV != newV && newV) {
+            codes.append('§').append(code);
+        }
+    }
+
+    /**
+     * 把 RGB 颜色转成 § 代码：
+     * 优先用精确的 §x hex 代码（1.16+ 支持），保证颜色完全一致。
+     */
+    private static String rgbToLegacy(int rgb) {
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+
+        // 先检查是否是标准 16 色（用短代码更简洁）
+        Formatting std = nearestColor(r, g, b);
+        if (std != null) {
+            int c = std.getColorValue();
+            if (c == rgb || (r == ((c >> 16) & 0xFF) && g == ((c >> 8) & 0xFF) && b == (c & 0xFF))) {
+                return "§" + std.getCode();
+            }
+        }
+
+        // 否则用精确 hex 代码：§x§R§R§G§G§B§B
+        char[] hex = "0123456789abcdef".toCharArray();
+        StringBuilder sb = new StringBuilder("§x");
+        sb.append('§').append(hex[(r >> 4) & 0xF]).append('§').append(hex[r & 0xF]);
+        sb.append('§').append(hex[(g >> 4) & 0xF]).append('§').append(hex[g & 0xF]);
+        sb.append('§').append(hex[(b >> 4) & 0xF]).append('§').append(hex[b & 0xF]);
+        return sb.toString();
+    }
+
+    /** 找最接近的标准颜色（用于判断是否能用短代码） */
+    private static Formatting nearestColor(int r, int g, int b) {
         Formatting best = null;
         int bestDist = Integer.MAX_VALUE;
         for (Formatting f : Formatting.values()) {
-            if (!f.isColor()) {
+            if (!f.isColor() || f.getColorValue() == null) {
                 continue;
             }
-            Integer c = f.getColorValue();
-            if (c == null) {
-                continue;
-            }
-            int dist = colorDistance(rgb, c);
+            int c = f.getColorValue();
+            int cr = (c >> 16) & 0xFF, cg = (c >> 8) & 0xFF, cb = c & 0xFF;
+            int dr = r - cr, dg = g - cg, db = b - cb;
+            int dist = dr * dr + dg * dg + db * db;
             if (dist < bestDist) {
                 bestDist = dist;
                 best = f;
             }
         }
         return best;
-    }
-
-    private static int colorDistance(int a, int b) {
-        int ar = (a >> 16) & 0xFF, ag = (a >> 8) & 0xFF, ab = a & 0xFF;
-        int br = (b >> 16) & 0xFF, bg = (b >> 8) & 0xFF, bb = b & 0xFF;
-        int dr = ar - br, dg = ag - bg, db = ab - bb;
-        return dr * dr + dg * dg + db * db;
     }
 }
