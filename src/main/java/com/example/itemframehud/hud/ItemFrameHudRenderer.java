@@ -2,18 +2,16 @@ package com.example.itemframehud.hud;
 
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.Vec3d;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 
 import java.util.List;
@@ -31,7 +29,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
     private static final double RAYCAST_DISTANCE = 8.0D;
 
     @Override
-    public void onHudRender(DrawContext drawContext, float tickDelta) {
+    public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client == null || client.player == null || client.world == null) {
             return;
@@ -42,7 +40,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
 
         PlayerEntity player = client.player;
-        ItemFrameEntity target = findTargetItemFrame(client, player, tickDelta);
+        ItemFrameEntity target = findTargetItemFrame(client, player);
         if (target == null) {
             return;
         }
@@ -66,7 +64,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
      * 2) 否则看命中的方块（假活板门/珊瑚扇）附近是否有 ItemFrame；
      * 3) 再不行，扫描玩家视线路径上近距离的 ItemFrame。
      */
-    private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player, float tickDelta) {
+    private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
         HitResult hit = client.crosshairTarget;
         if (hit == null) {
             return null;
@@ -90,7 +88,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
 
         // 情况 3：沿视线方向做一次自定义射线，找近距离的 ItemFrame
-        return raycastForItemFrame(client, player, tickDelta);
+        return raycastForItemFrame(client, player);
     }
 
     /** 在给定位置附近 SCAN_RADIUS 格内找最近的 ItemFrame */
@@ -106,7 +104,10 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         ItemFrameEntity best = null;
         double bestDist = Double.MAX_VALUE;
         for (ItemFrameEntity f : frames) {
-            double d = f.getPos().squaredDistanceTo(center);
+            double dx = f.getX() - center.x;
+            double dy = f.getY() - center.y;
+            double dz = f.getZ() - center.z;
+            double d = dx * dx + dy * dy + dz * dz;
             if (d < bestDist) {
                 bestDist = d;
                 best = f;
@@ -116,9 +117,11 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
     }
 
     /** 沿玩家视线方向做射线，命中 ItemFrame 则返回 */
-    private ItemFrameEntity raycastForItemFrame(MinecraftClient client, PlayerEntity player, float tickDelta) {
-        Vec3d start = player.getCameraPosVec(tickDelta);
-        Vec3d dir = player.getRotationVec(tickDelta);
+    private ItemFrameEntity raycastForItemFrame(MinecraftClient client, PlayerEntity player) {
+        // 相机位置：玩家眼睛位置（基础方法，跨版本稳定）
+        Vec3d start = player.getEyePos();
+        // 视线方向：由玩家的 pitch/yaw 计算
+        Vec3d dir = Vec3d.fromPolar(player.getPitch(), player.getYaw());
         Vec3d end = start.add(dir.multiply(RAYCAST_DISTANCE));
 
         Box rayBox = new Box(start, end).expand(1.0D);
@@ -142,13 +145,14 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
 
     /** 计算实体到射线的近似距离 */
     private double distanceToRay(ItemFrameEntity entity, Vec3d rayStart, Vec3d rayDir) {
-        Vec3d toEntity = entity.getPos().subtract(rayStart);
+        Vec3d entityPos = new Vec3d(entity.getX(), entity.getY(), entity.getZ());
+        Vec3d toEntity = entityPos.subtract(rayStart);
         double t = toEntity.dotProduct(rayDir);
         if (t < 0) {
             return toEntity.length();
         }
         Vec3d closest = rayStart.add(rayDir.multiply(t));
-        return closest.distanceTo(entity.getPos());
+        return closest.distanceTo(entityPos);
     }
 
     /** 在屏幕中央下方绘制带背景的文字标签 */
@@ -174,8 +178,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
 
         // 文字
-        MatrixStack matrices = context.getMatrices();
-        matrices.push();
         context.drawTextWithShadow(
                 client.textRenderer,
                 Text.literal(text),
@@ -183,6 +185,5 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                 y + padding,
                 0xFFFFFFFF
         );
-        matrices.pop();
     }
 }
