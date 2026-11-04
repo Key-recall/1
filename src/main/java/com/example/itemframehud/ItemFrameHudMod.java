@@ -1,5 +1,6 @@
 package com.example.itemframehud;
 
+import com.example.itemframehud.config.ModConfig;
 import com.example.itemframehud.hud.ItemFrameHudRenderer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
@@ -9,6 +10,7 @@ public class ItemFrameHudMod implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        ModConfig.register();
         ItemFrameHudRenderer renderer = new ItemFrameHudRenderer();
         HudRenderCallback.EVENT.register(renderer);
     }
