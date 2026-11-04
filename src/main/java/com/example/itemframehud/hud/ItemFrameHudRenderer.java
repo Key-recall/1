@@ -28,6 +28,8 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
     private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
 
+    private int diagTick = 0;
+
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -49,32 +51,53 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
 
-        ModConfig cfg = ModConfig.get();
+        // 临时诊断：每 200 帧在聊天栏提示一次找到了目标
+        if (diagTick++ % 200 == 0) {
+            player.sendMessage(Text.literal("[ItemFrameHUD] 找到目标: " + stack.getName().getString()), false);
+        }
+
+        // 安全获取配置：任何异常都回退到默认行为（显示名字）
+        ModConfig cfg;
+        try {
+            cfg = ModConfig.get();
+        } catch (Throwable t) {
+            cfg = null;
+        }
 
         // 组装要显示的行
         List<String> lines = new ArrayList<>();
-        if (cfg.showTooltip) {
-            // 完整 tooltip
-            List<Text> tooltip = stack.getTooltip(
-                    net.minecraft.item.Item.TooltipContext.DEFAULT,
-                    client.player,
-                    net.minecraft.item.tooltip.TooltipType.BASIC
-            );
-            for (Text t : tooltip) {
-                lines.add(serialize(t, cfg));
+        boolean showTooltip = cfg != null && cfg.showTooltip;
+        boolean showColor = cfg == null || cfg.showColor;
+        try {
+            if (showTooltip) {
+                List<Text> tooltip = stack.getTooltip(
+                        net.minecraft.item.Item.TooltipContext.DEFAULT,
+                        client.player,
+                        net.minecraft.item.tooltip.TooltipType.BASIC
+                );
+                for (Text t : tooltip) {
+                    lines.add(serialize(t, showColor));
+                }
+            } else {
+                lines.add(serialize(stack.getName(), showColor));
             }
-        } else {
-            // 只显示名字
-            lines.add(serialize(stack.getName(), cfg));
+        } catch (Throwable t) {
+            // 兜底：直接显示名字（不带颜色）
+            lines.clear();
+            lines.add(stack.getName().getString());
         }
 
         renderLabel(drawContext, client, lines, cfg);
     }
 
     /** 根据配置决定是否保留颜色代码 */
-    private String serialize(Text text, ModConfig cfg) {
-        if (cfg.showColor) {
-            return TextSerializer.toLegacy(text);
+    private String serialize(Text text, boolean showColor) {
+        if (showColor) {
+            try {
+                return TextSerializer.toLegacy(text);
+            } catch (Throwable t) {
+                return text.getString();
+            }
         }
         return text.getString();
     }
@@ -164,10 +187,16 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
 
-        // 文字保持原始大小，scale 影响内边距（避免矩阵缩放导致 1.21.11 编译问题）
-        int padding = (int) (6 * cfg.labelScale);
+        // 配置为空时用默认值
+        float scale = cfg != null ? cfg.labelScale : 1.0F;
+        int xPercent = cfg != null ? cfg.labelXPercent : 50;
+        int yPercent = cfg != null ? cfg.labelYPercent : 62;
+        int bgAlpha = cfg != null ? cfg.backgroundAlpha : 170;
+
+        // 文字保持原始大小，scale 影响内边距
+        int padding = (int) (6 * scale);
         int lineHeight = client.textRenderer.fontHeight;
-        int lineSpacing = (int) (2 * cfg.labelScale);
+        int lineSpacing = (int) (2 * scale);
 
         // 计算每行宽度和总宽高
         int maxWidth = 0;
@@ -183,11 +212,11 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         // 根据百分比计算位置
         int screenWidth = client.getWindow().getScaledWidth();
         int screenHeight = client.getWindow().getScaledHeight();
-        int x = (int) (screenWidth * cfg.labelXPercent / 100.0) - boxWidth / 2;
-        int y = (int) (screenHeight * cfg.labelYPercent / 100.0) - boxHeight / 2;
+        int x = (int) (screenWidth * xPercent / 100.0) - boxWidth / 2;
+        int y = (int) (screenHeight * yPercent / 100.0) - boxHeight / 2;
 
         // 半透明背景（透明度可调）
-        int bgColor = (cfg.backgroundAlpha << 24) | 0x000000;
+        int bgColor = (bgAlpha << 24) | 0x000000;
         context.fill(x, y, x + boxWidth, y + boxHeight, bgColor);
 
         // 逐行渲染
