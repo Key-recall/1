@@ -17,16 +17,17 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import java.util.List;
 
 /**
- * 每帧渲染时，检测准星指向的隐形 Item Frame（展示框），
- * 并把其中承载物品的显示名绘制在屏幕中央下方。
+ * 准星指向隐形 ItemFrame（展示框）时，在屏幕中央下方显示其承载物品名。
+ * 同时把玩家周围所有 ItemFrameEntity 的坐标和物品名打印到日志，便于诊断。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
-    /** 扫描附近实体时的搜索半径（格） */
-    private static final double SCAN_RADIUS = 1.5D;
-
-    /** 射线最大距离 */
+    private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
+    private static final double LOG_SCAN_RADIUS = 24.0D;
+
+    // 每 100 帧打印一次诊断日志，避免刷屏
+    private int logCooldown = 0;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -34,12 +35,19 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         if (client == null || client.player == null || client.world == null) {
             return;
         }
-        // 调试屏(F3)打开时不显示，避免遮挡
         if (client.getDebugHud().shouldShowDebugHud()) {
             return;
         }
 
         PlayerEntity player = client.player;
+
+        // 周期性诊断日志
+        logCooldown++;
+        if (logCooldown >= 100) {
+            logCooldown = 0;
+            dumpItemFrames(client);
+        }
+
         ItemFrameEntity target = findTargetItemFrame(client, player);
         if (target == null) {
             return;
@@ -59,19 +67,28 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         renderLabel(drawContext, client, text);
     }
 
-    /**
-     * 1) 先看准星直接命中的实体是否为 ItemFrame；
-     * 2) 否则看命中的方块（假活板门/珊瑚扇）附近是否有 ItemFrame；
-     * 3) 再不行，扫描玩家视线路径上近距离的 ItemFrame。
-     */
+    /** 把周围所有 ItemFrameEntity 打印到日志，用于诊断数据到底在哪 */
+    private void dumpItemFrames(MinecraftClient client) {
+        Vec3d cam = client.player.getEyePos();
+        Box box = new Box(
+                cam.x - LOG_SCAN_RADIUS, cam.y - LOG_SCAN_RADIUS, cam.z - LOG_SCAN_RADIUS,
+                cam.x + LOG_SCAN_RADIUS, cam.y + LOG_SCAN_RADIUS, cam.z + LOG_SCAN_RADIUS
+        );
+        List<ItemFrameEntity> frames = client.world.getEntitiesByClass(ItemFrameEntity.class, box, e -> true);
+        System.out.println("[ItemFrameHUD] 周围 ItemFrame 数量: " + frames.size());
+        for (ItemFrameEntity f : frames) {
+            ItemStack s = f.getHeldItemStack();
+            String nm = s.isEmpty() ? "(空)" : s.getName().getString();
+            System.out.println("[ItemFrameHUD] ItemFrame @ " + f.getBlockX() + "," + f.getBlockY() + "," + f.getBlockZ()
+                    + " invisible=" + f.isInvisible() + " item=" + nm);
+        }
+    }
+
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
         HitResult hit = client.crosshairTarget;
-        if (hit == null) {
-            return null;
-        }
 
         // 情况 1：直接命中实体
-        if (hit.getType() == HitResult.Type.ENTITY) {
+        if (hit != null && hit.getType() == HitResult.Type.ENTITY) {
             Entity entity = ((EntityHitResult) hit).getEntity();
             if (entity instanceof ItemFrameEntity frame) {
                 return frame;
@@ -79,7 +96,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
 
         // 情况 2：命中方块，在命中点附近找 ItemFrame
-        if (hit.getType() == HitResult.Type.BLOCK) {
+        if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
             Vec3d hitPos = hit.getPos();
             ItemFrameEntity nearby = findNearestItemFrame(client, hitPos);
             if (nearby != null) {
@@ -87,11 +104,10 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             }
         }
 
-        // 情况 3：沿视线方向做一次自定义射线，找近距离的 ItemFrame
+        // 情况 3：沿视线方向扫描最近的 ItemFrame
         return raycastForItemFrame(client, player);
     }
 
-    /** 在给定位置附近 SCAN_RADIUS 格内找最近的 ItemFrame */
     private ItemFrameEntity findNearestItemFrame(MinecraftClient client, Vec3d center) {
         Box box = new Box(
                 center.x - SCAN_RADIUS, center.y - SCAN_RADIUS, center.z - SCAN_RADIUS,
@@ -116,15 +132,12 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         return best;
     }
 
-    /** 沿玩家视线方向做射线，命中 ItemFrame 则返回 */
     private ItemFrameEntity raycastForItemFrame(MinecraftClient client, PlayerEntity player) {
-        // 相机位置：玩家眼睛位置（基础方法，跨版本稳定）
         Vec3d start = player.getEyePos();
-        // 视线方向：由玩家的 pitch/yaw 计算
         Vec3d dir = Vec3d.fromPolar(player.getPitch(), player.getYaw());
         Vec3d end = start.add(dir.multiply(RAYCAST_DISTANCE));
 
-        Box rayBox = new Box(start, end).expand(1.0D);
+        Box rayBox = new Box(start, end).expand(1.5D);
         List<ItemFrameEntity> frames = client.world.getEntitiesByClass(ItemFrameEntity.class, rayBox, e -> true);
 
         ItemFrameEntity best = null;
@@ -136,14 +149,12 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                 best = f;
             }
         }
-        // 只接受足够贴近视线的展示框
-        if (best != null && bestDist < 1.0D) {
+        if (best != null && bestDist < 1.5D) {
             return best;
         }
         return null;
     }
 
-    /** 计算实体到射线的近似距离 */
     private double distanceToRay(ItemFrameEntity entity, Vec3d rayStart, Vec3d rayDir) {
         Vec3d entityPos = new Vec3d(entity.getX(), entity.getY(), entity.getZ());
         Vec3d toEntity = entityPos.subtract(rayStart);
@@ -155,7 +166,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         return closest.distanceTo(entityPos);
     }
 
-    /** 在屏幕中央下方绘制带背景的文字标签 */
     private void renderLabel(DrawContext context, MinecraftClient client, String text) {
         int width = client.getWindow().getScaledWidth();
         int height = client.getWindow().getScaledHeight();
@@ -165,19 +175,15 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         int boxWidth = textWidth + padding * 2;
         int boxHeight = client.textRenderer.fontHeight + padding * 2;
 
-        // 标签位置：屏幕中央下方约 1/4 屏高
         int x = (width - boxWidth) / 2;
         int y = (int) (height * 0.62) - boxHeight / 2;
 
-        // 半透明黑底
         context.fill(x, y, x + boxWidth, y + boxHeight, 0xAA000000);
-        // 边框
         context.fill(x, y, x + boxWidth, y + 1, 0xFFFFFFFF);
         context.fill(x, y + boxHeight - 1, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
         context.fill(x, y, x + 1, y + boxHeight, 0xFFFFFFFF);
         context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
 
-        // 文字
         context.drawTextWithShadow(
                 client.textRenderer,
                 Text.literal(text),
