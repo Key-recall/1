@@ -4,6 +4,7 @@ import com.example.itemframehud.config.ModConfig;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
+import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -19,13 +20,23 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 准星指向隐形展示框（含发光展示框）时，显示其承载物品名。
- * 直接使用 Text 对象渲染，完整保留服务端设定的颜色和格式。
+ * 准星指向隐形展示框时显示物品名（带颜色）。
+ * 编辑模式：F6 进入/退出，拖拽标签改变位置，拖拽右下角改变大小。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
     private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
+
+    private boolean editing = false;
+    private boolean dragging = false;
+    private boolean resizing = false;
+    private int dragStartMouseX = 0;
+    private int dragStartMouseY = 0;
+    private int dragStartOffsetX = 0;
+    private int dragStartOffsetY = 0;
+    private int dragStartScale = 100;
+    private boolean f6WasDown = false;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -34,104 +45,209 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
 
+        handleEditToggle(client);
+
         PlayerEntity player = client.player;
         ItemFrameEntity target = findTargetItemFrame(client, player);
-        if (target == null) {
-            return;
-        }
-
-        ItemStack stack = target.getHeldItemStack();
-        if (stack.isEmpty()) {
-            return;
-        }
-
-        // 安全获取配置
-        ModConfig cfg;
-        try {
-            cfg = ModConfig.get();
-        } catch (Throwable t) {
-            cfg = null;
-        }
-
-        boolean showTooltip = cfg != null && cfg.showTooltip;
-
-        // 用 Text 对象列表（保留颜色和格式）
-        List<Text> lines = new ArrayList<>();
-        lines.add(stack.getName());
-
-        if (showTooltip) {
-            // 诊断：打印 tooltip 和组件信息（临时）
-            dumpStackInfo(client, stack);
-
-            // 方式 1：尝试 getTooltip 的后续行
-            try {
-                List<Text> tooltip = stack.getTooltip(
-                        net.minecraft.item.Item.TooltipContext.DEFAULT,
-                        client.player,
-                        net.minecraft.item.tooltip.TooltipType.BASIC
-                );
-                for (int i = 1; i < tooltip.size(); i++) {
-                    lines.add(tooltip.get(i));
-                }
-            } catch (Throwable t) {
-            }
-
-            // 方式 2：额外读取 LORE 组件
-            try {
-                net.minecraft.component.type.LoreComponent lore =
-                        stack.get(net.minecraft.component.DataComponentTypes.LORE);
-                if (lore != null) {
-                    for (Text loreLine : lore.lines()) {
-                        if (!lines.contains(loreLine)) {
-                            lines.add(loreLine);
-                        }
-                    }
-                }
-            } catch (Throwable t) {
+        List<Text> lines = null;
+        if (target != null) {
+            ItemStack stack = target.getHeldItemStack();
+            if (!stack.isEmpty()) {
+                lines = new ArrayList<>();
+                lines.add(stack.getName());
             }
         }
 
-        renderLabel(drawContext, client, lines, cfg);
+        if (editing) {
+            renderEditOverlay(drawContext, client, lines);
+        } else if (lines != null) {
+            renderLabel(drawContext, client, lines);
+        }
     }
 
-    private int dumpTick = 0;
+    /** F6 切换编辑模式 */
+    private void handleEditToggle(MinecraftClient client) {
+        boolean f6Down = InputUtil.isKeyPressed(client.getWindow().getHandle(), InputUtil.GLFW_KEY_F6);
+        boolean pressed = f6Down && !f6WasDown;
+        f6WasDown = f6Down;
 
-    /** 临时诊断：打印物品的 tooltip 和 name 结构到聊天栏 */
-    private void dumpStackInfo(MinecraftClient client, ItemStack stack) {
-        if (dumpTick++ % 60 != 0) {
-            return;
-        }
-        try {
-            // 打印名字的完整结构（含 siblings 数量）
-            Text name = stack.getName();
-            client.player.sendMessage(Text.literal("[诊断] 名字: '" + name.getString() + "' siblings=" + name.getSiblings().size()), false);
-
-            // 打印 tooltip 行数和内容
-            List<Text> tooltip = stack.getTooltip(
-                    net.minecraft.item.Item.TooltipContext.DEFAULT,
-                    client.player,
-                    net.minecraft.item.tooltip.TooltipType.BASIC
-            );
-            client.player.sendMessage(Text.literal("[诊断] tooltip 共 " + tooltip.size() + " 行:"), false);
-            for (int i = 0; i < tooltip.size() && i < 10; i++) {
-                client.player.sendMessage(Text.literal("[诊断]   [" + i + "] " + tooltip.get(i).getString()), false);
+        if (pressed) {
+            editing = !editing;
+            if (editing) {
+                client.player.sendMessage(Text.literal("[ItemFrameHUD] 编辑模式：拖动标签移动位置，拖红色手柄改大小，F6 保存退出"), false);
+            } else {
+                client.player.sendMessage(Text.literal("[ItemFrameHUD] 已退出编辑模式"), false);
             }
-        } catch (Throwable t) {
-            client.player.sendMessage(Text.literal("[诊断] 失败: " + t.getClass().getSimpleName() + ": " + t.getMessage()), false);
         }
     }
+
+    private void renderEditOverlay(DrawContext context, MinecraftClient client, List<Text> lines) {
+        ModConfig cfg = ModConfig.get();
+        int screenW = client.getWindow().getScaledWidth();
+        int screenH = client.getWindow().getScaledHeight();
+
+        int[] pos = calcPosition(client, lines, cfg);
+        int x = pos[0], y = pos[1], w = pos[2], h = pos[3];
+
+        handleDrag(client, x, y, w, h, cfg);
+
+        pos = calcPosition(client, lines, cfg);
+        x = pos[0]; y = pos[1]; w = pos[2]; h = pos[3];
+
+        // 渲染内容
+        if (lines != null && !lines.isEmpty()) {
+            renderLabelAt(context, client, lines, x, y, w, h, cfg);
+        } else {
+            List<Text> preview = new ArrayList<>();
+            preview.add(Text.literal("示例物品名"));
+            renderLabelAt(context, client, preview, x, y, w, h, cfg);
+        }
+
+        // 黄色边框
+        int border = 0xFFFFFF00;
+        context.fill(x - 1, y - 1, x + w + 1, y, border);
+        context.fill(x - 1, y + h, x + w + 1, y + h + 1, border);
+        context.fill(x - 1, y, x, y + h, border);
+        context.fill(x + w, y, x + w + 1, y + h, border);
+
+        // 右下角红色拖拽手柄
+        int hs = 8;
+        context.fill(x + w - hs, y + h - hs, x + w, y + h, 0xFFFF0000);
+
+        context.drawTextWithShadow(client.textRenderer,
+                Text.literal("编辑模式 (F6保存) 拖动移动 / 拖红角改大小"),
+                5, screenH - 15, 0xFFFFFF);
+    }
+
+    private void handleDrag(MinecraftClient client, int x, int y, int w, int h, ModConfig cfg) {
+        // 鼠标坐标（转换为 GUI 缩放坐标）
+        double mx = client.mouse.getX();
+        double my = client.mouse.getY();
+        int scaledW = client.getWindow().getScaledWidth();
+        int scaledH = client.getWindow().getScaledHeight();
+        int winW = client.getWindow().getWidth();
+        int winH = client.getWindow().getHeight();
+        int mouseX = (int) (mx * scaledW / winW);
+        int mouseY = (int) (my * scaledH / winH);
+
+        boolean mouseDown = client.options.attackKey.isPressed();
+
+        int hs = 8;
+        boolean onHandle = mouseX >= x + w - hs && mouseX <= x + w && mouseY >= y + h - hs && mouseY <= y + h;
+        boolean onBody = mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+
+        if (mouseDown && !dragging && !resizing) {
+            if (onHandle) {
+                resizing = true;
+                dragStartMouseX = mouseX;
+                dragStartMouseY = mouseY;
+                dragStartScale = cfg.scalePercent;
+            } else if (onBody) {
+                dragging = true;
+                dragStartMouseX = mouseX;
+                dragStartMouseY = mouseY;
+                dragStartOffsetX = cfg.offsetX;
+                dragStartOffsetY = cfg.offsetY;
+            }
+        }
+
+        if (!mouseDown) {
+            dragging = false;
+            resizing = false;
+        }
+
+        if (dragging) {
+            cfg.offsetX = dragStartOffsetX + (mouseX - dragStartMouseX);
+            cfg.offsetY = dragStartOffsetY + (mouseY - dragStartMouseY);
+        }
+
+        if (resizing) {
+            int delta = (mouseX - dragStartMouseX) + (dragStartMouseY - mouseY);
+            int newScale = dragStartScale + delta / 2;
+            cfg.scalePercent = Math.max(30, Math.min(300, newScale));
+        }
+    }
+
+    private int[] calcPosition(MinecraftClient client, List<Text> lines, ModConfig cfg) {
+        int screenW = client.getWindow().getScaledWidth();
+        int screenH = client.getWindow().getScaledHeight();
+
+        float scale = cfg.scalePercent / 100.0F;
+        int padding = (int) (6 * scale);
+        int lineHeight = client.textRenderer.fontHeight;
+        int lineSpacing = (int) (2 * scale);
+
+        int maxWidth = 0;
+        int lineCount = 1;
+        if (lines != null && !lines.isEmpty()) {
+            lineCount = lines.size();
+            for (Text line : lines) {
+                int w = client.textRenderer.getWidth(line);
+                if (w > maxWidth) {
+                    maxWidth = w;
+                }
+            }
+        } else {
+            maxWidth = client.textRenderer.getWidth("示例物品名");
+        }
+        int boxW = maxWidth + padding * 2;
+        int boxH = lineHeight * lineCount + lineSpacing * (lineCount - 1) + padding * 2;
+
+        int anchorX = anchorX(screenW, cfg.anchor);
+        int anchorY = anchorY(screenH, cfg.anchor);
+
+        int x = anchorX + cfg.offsetX - boxW / 2;
+        int y = anchorY + cfg.offsetY - boxH / 2;
+
+        return new int[]{x, y, boxW, boxH};
+    }
+
+    private int anchorX(int screenW, int anchor) {
+        switch (anchor) {
+            case 0: case 3: case 6: return 0;
+            case 1: case 4: case 7: return screenW / 2;
+            default: return screenW;
+        }
+    }
+
+    private int anchorY(int screenH, int anchor) {
+        switch (anchor) {
+            case 0: case 1: case 2: return 0;
+            case 3: case 4: case 5: return screenH / 2;
+            default: return screenH;
+        }
+    }
+
+    private void renderLabel(DrawContext context, MinecraftClient client, List<Text> lines) {
+        ModConfig cfg = ModConfig.get();
+        int[] pos = calcPosition(client, lines, cfg);
+        renderLabelAt(context, client, lines, pos[0], pos[1], pos[2], pos[3], cfg);
+    }
+
+    private void renderLabelAt(DrawContext context, MinecraftClient client, List<Text> lines, int x, int y, int boxW, int boxH, ModConfig cfg) {
+        float scale = cfg.scalePercent / 100.0F;
+        int padding = (int) (6 * scale);
+        int lineHeight = client.textRenderer.fontHeight;
+        int lineSpacing = (int) (2 * scale);
+
+        int bgColor = (cfg.backgroundAlpha << 24) | 0x000000;
+        context.fill(x, y, x + boxW, y + boxH, bgColor);
+
+        int textY = y + padding;
+        for (Text line : lines) {
+            context.drawTextWithShadow(client.textRenderer, line, x + padding, textY, 0xFFFFFFFF);
+            textY += lineHeight + lineSpacing;
+        }
     }
 
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
         HitResult hit = client.crosshairTarget;
-
         if (hit != null && hit.getType() == HitResult.Type.ENTITY) {
             Entity entity = ((EntityHitResult) hit).getEntity();
             if (entity instanceof ItemFrameEntity frame) {
                 return frame;
             }
         }
-
         if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
             Vec3d hitPos = hit.getPos();
             ItemFrameEntity nearby = findNearestItemFrame(client, hitPos);
@@ -139,7 +255,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                 return nearby;
             }
         }
-
         return raycastForItemFrame(client, player);
     }
 
@@ -199,51 +314,5 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
         Vec3d closest = rayStart.add(rayDir.multiply(t));
         return closest.distanceTo(entityPos);
-    }
-
-    /** 渲染带背景的标签，直接渲染 Text 对象（保留颜色），支持位置、透明度、多行 */
-    private void renderLabel(DrawContext context, MinecraftClient client, List<Text> lines, ModConfig cfg) {
-        if (lines.isEmpty()) {
-            return;
-        }
-
-        float scale = cfg != null ? cfg.labelScale : 1.0F;
-        int xPercent = cfg != null ? cfg.labelXPercent : 50;
-        int yPercent = cfg != null ? cfg.labelYPercent : 62;
-        int bgAlpha = cfg != null ? cfg.backgroundAlpha : 170;
-
-        int padding = (int) (6 * scale);
-        int lineHeight = client.textRenderer.fontHeight;
-        int lineSpacing = (int) (2 * scale);
-
-        int maxWidth = 0;
-        for (Text line : lines) {
-            int w = client.textRenderer.getWidth(line);
-            if (w > maxWidth) {
-                maxWidth = w;
-            }
-        }
-        int boxWidth = maxWidth + padding * 2;
-        int boxHeight = lineHeight * lines.size() + lineSpacing * (lines.size() - 1) + padding * 2;
-
-        int screenWidth = client.getWindow().getScaledWidth();
-        int screenHeight = client.getWindow().getScaledHeight();
-        int x = (int) (screenWidth * xPercent / 100.0) - boxWidth / 2;
-        int y = (int) (screenHeight * yPercent / 100.0) - boxHeight / 2;
-
-        int bgColor = (bgAlpha << 24) | 0x000000;
-        context.fill(x, y, x + boxWidth, y + boxHeight, bgColor);
-
-        int textY = y + padding;
-        for (Text line : lines) {
-            context.drawTextWithShadow(
-                    client.textRenderer,
-                    line,
-                    x + padding,
-                    textY,
-                    0xFFFFFFFF
-            );
-            textY += lineHeight + lineSpacing;
-        }
     }
 }
