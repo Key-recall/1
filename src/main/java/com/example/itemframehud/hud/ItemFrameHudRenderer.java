@@ -14,18 +14,18 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 准星指向隐形 ItemFrame（展示框）时，在屏幕中央下方显示其承载物品名（带颜色）。
- * 这是最小可靠版本：仅保留已验证可工作的逻辑 + 颜色还原。
+ * 诊断版：扫描玩家周围所有实体，打印实体类型、坐标、是否隐形，
+ * 直接显示在屏幕左上角，用于确定酒水到底是什么实体。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
     private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
-
-    private int diagTick = 0;
+    private static final double DIAG_RADIUS = 20.0D;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -33,41 +33,62 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         if (client == null || client.player == null || client.world == null) {
             return;
         }
-        if (client.getDebugHud().shouldShowDebugHud()) {
-            return;
-        }
 
+        // 诊断：无条件显示周围所有实体（放在最前面，一定能执行）
+        renderEntityDiagnostic(drawContext, client);
+
+        // 正常功能
         PlayerEntity player = client.player;
         ItemFrameEntity target = findTargetItemFrame(client, player);
         if (target == null) {
             return;
         }
-
         ItemStack stack = target.getHeldItemStack();
         if (stack.isEmpty()) {
             return;
         }
-
-        // 临时诊断：每 200 帧在聊天栏提示
-        if (diagTick++ % 200 == 0) {
-            player.sendMessage(Text.literal("[ItemFrameHUD] 找到目标: " + stack.getName().getString()), false);
-        }
-
-        // 带颜色的名字
-        String text = coloredName(stack.getName());
+        String text = stack.getName().getString();
         if (text == null || text.isEmpty()) {
             return;
         }
-
         renderLabel(drawContext, client, text);
     }
 
-    /** 把名字还原成带 § 颜色代码的字符串 */
-    private String coloredName(Text name) {
-        try {
-            return com.example.itemframehud.util.TextSerializer.toLegacy(name);
-        } catch (Throwable t) {
-            return name.getString();
+    /** 诊断：列出玩家周围 20 格内所有实体 */
+    private void renderEntityDiagnostic(DrawContext context, MinecraftClient client) {
+        Vec3d cam = client.player.getEyePos();
+        Box box = new Box(
+                cam.x - DIAG_RADIUS, cam.y - DIAG_RADIUS, cam.z - DIAG_RADIUS,
+                cam.x + DIAG_RADIUS, cam.y + DIAG_RADIUS, cam.z + DIAG_RADIUS
+        );
+
+        // 扫描所有实体类型
+        List<Entity> entities = client.world.getEntitiesByClass(Entity.class, box, e -> e != client.player);
+
+        List<String> lines = new ArrayList<>();
+        lines.add("[诊断] 周围实体总数: " + entities.size());
+        int count = 0;
+        for (Entity e : entities) {
+            if (count >= 20) {
+                lines.add("... (还有更多)");
+                break;
+            }
+            String type = e.getType().getName().getString();
+            String pos = (int) e.getX() + "," + (int) e.getY() + "," + (int) e.getZ();
+            String inv = e.isInvisible() ? "隐形" : "";
+            String extra = "";
+            if (e instanceof ItemFrameEntity f) {
+                ItemStack s = f.getHeldItemStack();
+                extra = s.isEmpty() ? "(空框)" : "物品=" + s.getName().getString();
+            }
+            lines.add(type + " @" + pos + " " + inv + " " + extra);
+            count++;
+        }
+
+        int y = 15;
+        for (String line : lines) {
+            context.drawTextWithShadow(client.textRenderer, Text.literal(line), 5, y, 0x00FF00);
+            y += 11;
         }
     }
 
