@@ -1,34 +1,43 @@
-This is a Fabric client mod that shows the name of the item held by the
-invisible item frame (or the fake block it is disguised as) under your
-crosshair.
+# ItemFrame HUD
 
-## What it does
+一个 Fabric 客户端 Mod，用于在准星指向**隐形物品展示框（含发光展示框）**时，在屏幕上显示其承载物品的名称。
 
-When you aim your crosshair at a "3D item display" (which is actually an
-invisible ItemFrameEntity disguised by the server as an iron trapdoor on the
-floor, or a dead tube coral fan on the wall), this mod reads the item stack
-inside that item frame and draws its display name in a small label near the
-center of the screen.
+## 解决什么问题
 
-## How it works
+某些服务器使用**隐形发光物品展示框（Glow Item Frame）**来展示大型 3D 物品（如酒水、装饰品）。这些展示框被服务器伪装成铁活板门或珊瑚扇，普通 HUD Mod（如 Jade）只能显示伪装方块，看不到里面到底是什么物品。
 
-1. Reads the client crosshair hit result.
-2. If the hit entity is an `ItemFrameEntity`, reads `getHeldItemStack()`.
-3. If the hit is a block (the fake trapdoor / coral fan), searches for the
-   nearest item frame within a small radius.
-4. As a fallback, raycasts along the player's view direction for a nearby
-   item frame.
-5. Draws the item's name on the HUD.
+本 Mod 通过射线检测准星指向的展示框，直接读取其承载物品并显示名称，**完整保留服务端设定的颜色和格式**（包括逐字渐变色、加粗、斜体等）。
 
-## Building
+## 功能
+
+- 准星指向隐形展示框时，屏幕显示物品名称
+- 完整保留颜色（服务端设定的 RGB 渐变色等）
+- 通过 Cloth Config 配置界面调整显示位置、大小、背景透明度
+- 支持 ModMenu 集成（在 Mods 列表里点"配置"）
+
+## 安装
+
+1. 下载 `.jar` 文件
+2. 放入客户端整合包的 `mods` 文件夹
+3. 需要前置：Fabric Loader 0.20.1+、Fabric API、Cloth Config、Minecraft 1.21.11
+
+## 使用
+
+进游戏后，将准星指向 3D 酒水（或它下方的伪装方块），屏幕即可显示物品名称。
+
+### 调整显示位置/大小
+
+1. 打开 **Mods（模组）列表** → 找到 **Item Frame HUD** → 点 **配置**
+2. 调整 `labelXPercent` / `labelYPercent`（位置）、`labelScale`（大小）等参数
+
+## 构建
 
 ```
 ./gradlew build
 ```
 
-The jar will be in `build/libs/`.
+产物在 `build/libs/`。
 
-## Installing
+## 许可证
 
-Put the built jar into your client's `mods` folder (requires Fabric Loader
-0.20.1+ and Fabric API for Minecraft 1.21.11).
+MIT
