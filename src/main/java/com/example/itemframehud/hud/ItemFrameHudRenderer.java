@@ -1,7 +1,5 @@
 package com.example.itemframehud.hud;
 
-import com.example.itemframehud.config.ModConfig;
-import com.example.itemframehud.util.TextSerializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
@@ -16,12 +14,11 @@ import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 准星指向隐形 ItemFrame（展示框）时，在屏幕指定位置显示其承载物品名。
- * 支持：颜色代码还原、完整 tooltip、可调位置/大小、背景透明度。
+ * 准星指向隐形 ItemFrame（展示框）时，在屏幕中央下方显示其承载物品名（带颜色）。
+ * 这是最小可靠版本：仅保留已验证可工作的逻辑 + 颜色还原。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
@@ -51,55 +48,27 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
 
-        // 临时诊断：每 200 帧在聊天栏提示一次找到了目标
+        // 临时诊断：每 200 帧在聊天栏提示
         if (diagTick++ % 200 == 0) {
             player.sendMessage(Text.literal("[ItemFrameHUD] 找到目标: " + stack.getName().getString()), false);
         }
 
-        // 安全获取配置：任何异常都回退到默认行为（显示名字）
-        ModConfig cfg;
-        try {
-            cfg = ModConfig.get();
-        } catch (Throwable t) {
-            cfg = null;
+        // 带颜色的名字
+        String text = coloredName(stack.getName());
+        if (text == null || text.isEmpty()) {
+            return;
         }
 
-        // 组装要显示的行
-        List<String> lines = new ArrayList<>();
-        boolean showTooltip = cfg != null && cfg.showTooltip;
-        boolean showColor = cfg == null || cfg.showColor;
-        try {
-            if (showTooltip) {
-                List<Text> tooltip = stack.getTooltip(
-                        net.minecraft.item.Item.TooltipContext.DEFAULT,
-                        client.player,
-                        net.minecraft.item.tooltip.TooltipType.BASIC
-                );
-                for (Text t : tooltip) {
-                    lines.add(serialize(t, showColor));
-                }
-            } else {
-                lines.add(serialize(stack.getName(), showColor));
-            }
-        } catch (Throwable t) {
-            // 兜底：直接显示名字（不带颜色）
-            lines.clear();
-            lines.add(stack.getName().getString());
-        }
-
-        renderLabel(drawContext, client, lines, cfg);
+        renderLabel(drawContext, client, text);
     }
 
-    /** 根据配置决定是否保留颜色代码 */
-    private String serialize(Text text, boolean showColor) {
-        if (showColor) {
-            try {
-                return TextSerializer.toLegacy(text);
-            } catch (Throwable t) {
-                return text.getString();
-            }
+    /** 把名字还原成带 § 颜色代码的字符串 */
+    private String coloredName(Text name) {
+        try {
+            return com.example.itemframehud.util.TextSerializer.toLegacy(name);
+        } catch (Throwable t) {
+            return name.getString();
         }
-        return text.getString();
     }
 
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
@@ -181,55 +150,30 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         return closest.distanceTo(entityPos);
     }
 
-    /** 渲染带背景的标签，支持位置、透明度、多行 */
-    private void renderLabel(DrawContext context, MinecraftClient client, List<String> lines, ModConfig cfg) {
-        if (lines.isEmpty()) {
-            return;
-        }
+    private void renderLabel(DrawContext context, MinecraftClient client, String text) {
+        int width = client.getWindow().getScaledWidth();
+        int height = client.getWindow().getScaledHeight();
 
-        // 配置为空时用默认值
-        float scale = cfg != null ? cfg.labelScale : 1.0F;
-        int xPercent = cfg != null ? cfg.labelXPercent : 50;
-        int yPercent = cfg != null ? cfg.labelYPercent : 62;
-        int bgAlpha = cfg != null ? cfg.backgroundAlpha : 170;
+        int textWidth = client.textRenderer.getWidth(text);
+        int padding = 6;
+        int boxWidth = textWidth + padding * 2;
+        int boxHeight = client.textRenderer.fontHeight + padding * 2;
 
-        // 文字保持原始大小，scale 影响内边距
-        int padding = (int) (6 * scale);
-        int lineHeight = client.textRenderer.fontHeight;
-        int lineSpacing = (int) (2 * scale);
+        int x = (width - boxWidth) / 2;
+        int y = (int) (height * 0.62) - boxHeight / 2;
 
-        // 计算每行宽度和总宽高
-        int maxWidth = 0;
-        for (String line : lines) {
-            int w = client.textRenderer.getWidth(line);
-            if (w > maxWidth) {
-                maxWidth = w;
-            }
-        }
-        int boxWidth = maxWidth + padding * 2;
-        int boxHeight = lineHeight * lines.size() + lineSpacing * (lines.size() - 1) + padding * 2;
+        context.fill(x, y, x + boxWidth, y + boxHeight, 0xAA000000);
+        context.fill(x, y, x + boxWidth, y + 1, 0xFFFFFFFF);
+        context.fill(x, y + boxHeight - 1, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
+        context.fill(x, y, x + 1, y + boxHeight, 0xFFFFFFFF);
+        context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
 
-        // 根据百分比计算位置
-        int screenWidth = client.getWindow().getScaledWidth();
-        int screenHeight = client.getWindow().getScaledHeight();
-        int x = (int) (screenWidth * xPercent / 100.0) - boxWidth / 2;
-        int y = (int) (screenHeight * yPercent / 100.0) - boxHeight / 2;
-
-        // 半透明背景（透明度可调）
-        int bgColor = (bgAlpha << 24) | 0x000000;
-        context.fill(x, y, x + boxWidth, y + boxHeight, bgColor);
-
-        // 逐行渲染
-        int textY = y + padding;
-        for (String line : lines) {
-            context.drawTextWithShadow(
-                    client.textRenderer,
-                    Text.literal(line),
-                    x + padding,
-                    textY,
-                    0xFFFFFFFF
-            );
-            textY += lineHeight + lineSpacing;
-        }
+        context.drawTextWithShadow(
+                client.textRenderer,
+                Text.literal(text),
+                x + padding,
+                y + padding,
+                0xFFFFFFFF
+        );
     }
 }

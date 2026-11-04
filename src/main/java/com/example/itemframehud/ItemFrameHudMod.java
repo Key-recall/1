@@ -10,8 +10,15 @@ public class ItemFrameHudMod implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        ModConfig.register();
+        // 先注册 HUD 回调（核心功能，绝不能因为配置失败而中断）
         ItemFrameHudRenderer renderer = new ItemFrameHudRenderer();
         HudRenderCallback.EVENT.register(renderer);
+
+        // 再注册配置（即使失败也不影响 HUD）
+        try {
+            ModConfig.register();
+        } catch (Throwable t) {
+            System.err.println("[ItemFrameHUD] 配置注册失败: " + t);
+        }
     }
 }
