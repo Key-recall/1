@@ -13,23 +13,16 @@ import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 准星指向隐形 ItemFrame 时显示物品名。
- * 诊断模式：在屏幕左侧列出玩家周围所有 ItemFrameEntity（含隐形）的坐标和物品名，
- * 用于确认酒水数据到底在哪。
+ * 准星指向隐形 ItemFrame（展示框）时，在屏幕中央下方显示其承载物品名。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("itemframe-hud");
     private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
-    private static final double DIAG_SCAN_RADIUS = 16.0D;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -40,10 +33,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
 
         PlayerEntity player = client.player;
 
-        // 诊断：在屏幕左上角列出周围所有 ItemFrame
-        renderDiagnostic(drawContext, client, player);
-
-        // 正常功能：准星指向时显示物品名
         ItemFrameEntity target = findTargetItemFrame(client, player);
         if (target != null) {
             ItemStack stack = target.getHeldItemStack();
@@ -53,37 +42,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                     renderLabel(drawContext, client, text);
                 }
             }
-        }
-    }
-
-    /** 诊断：列出玩家周围 16 格内所有 ItemFrameEntity */
-    private void renderDiagnostic(DrawContext context, MinecraftClient client, PlayerEntity player) {
-        Vec3d cam = player.getEyePos();
-        Box box = new Box(
-                cam.x - DIAG_SCAN_RADIUS, cam.y - DIAG_SCAN_RADIUS, cam.z - DIAG_SCAN_RADIUS,
-                cam.x + DIAG_SCAN_RADIUS, cam.y + DIAG_SCAN_RADIUS, cam.z + DIAG_SCAN_RADIUS
-        );
-        List<ItemFrameEntity> frames = client.world.getEntitiesByClass(ItemFrameEntity.class, box, e -> true);
-
-        // 同时打印到日志
-        LOGGER.info("[诊断] 周围 ItemFrame 数量: {}", frames.size());
-
-        List<String> lines = new ArrayList<>();
-        lines.add("[诊断] ItemFrame 数量: " + frames.size());
-        for (ItemFrameEntity f : frames) {
-            ItemStack s = f.getHeldItemStack();
-            String nm = s.isEmpty() ? "(空)" : s.getName().getString();
-            String line = f.getBlockX() + "," + f.getBlockY() + "," + f.getBlockZ()
-                    + " inv=" + f.isInvisible() + " " + nm;
-            lines.add(line);
-            LOGGER.info("[诊断] ItemFrame @ {} inv={} item={}", f.getBlockPos(), f.isInvisible(), nm);
-        }
-
-        // 渲染到屏幕左上角
-        int y = 20;
-        for (String line : lines) {
-            context.drawTextWithShadow(client.textRenderer, Text.literal(line), 10, y, 0xFFFFFF);
-            y += 12;
         }
     }
 
