@@ -4,7 +4,6 @@ import com.example.itemframehud.config.ModConfig;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.decoration.ItemFrameEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -36,7 +35,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
     private int dragStartOffsetX = 0;
     private int dragStartOffsetY = 0;
     private int dragStartScale = 100;
-    private boolean f6WasDown = false;
+    private boolean editKeyWasDown = false;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -65,19 +64,28 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         }
     }
 
-    /** F6 切换编辑模式 */
+    /** F6 切换编辑模式（用 options 里确定存在的按键检测） */
     private void handleEditToggle(MinecraftClient client) {
-        boolean f6Down = InputUtil.isKeyPressed(client.getWindow().getHandle(), InputUtil.GLFW_KEY_F6);
-        boolean pressed = f6Down && !f6WasDown;
-        f6WasDown = f6Down;
+        // 用 F6：通过 GLFW 键盘状态检测（org.lwjgl 是 Minecraft 自带依赖）
+        boolean f6Down = isF6Down(client);
+        boolean pressed = f6Down && !editKeyWasDown;
+        editKeyWasDown = f6Down;
 
         if (pressed) {
             editing = !editing;
             if (editing) {
-                client.player.sendMessage(Text.literal("[ItemFrameHUD] 编辑模式：拖动标签移动位置，拖红色手柄改大小，F6 保存退出"), false);
+                client.player.sendMessage(Text.literal("[ItemFrameHUD] 编辑模式：拖动标签移动位置，拖红角改大小，F6 保存退出"), false);
             } else {
                 client.player.sendMessage(Text.literal("[ItemFrameHUD] 已退出编辑模式"), false);
             }
+        }
+    }
+
+    private boolean isF6Down(MinecraftClient client) {
+        try {
+            return org.lwjgl.glfw.GLFW.glfwGetKey(client.getWindow().getHandle(), org.lwjgl.glfw.GLFW.GLFW_KEY_F6) == org.lwjgl.glfw.GLFW.GLFW_PRESS;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
