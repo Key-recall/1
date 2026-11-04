@@ -35,9 +35,6 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         if (client == null || client.player == null || client.world == null) {
             return;
         }
-        if (client.getDebugHud().shouldShowDebugHud()) {
-            return;
-        }
 
         PlayerEntity player = client.player;
         ItemFrameEntity target = findTargetItemFrame(client, player);
