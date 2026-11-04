@@ -1,5 +1,7 @@
 package com.example.itemframehud.hud;
 
+import com.example.itemframehud.config.ModConfig;
+import com.example.itemframehud.util.TextSerializer;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.render.RenderTickCounter;
@@ -18,16 +20,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 诊断版：扫描玩家周围所有实体，打印实体类型、坐标、是否隐形，
- * 直接显示在屏幕左上角，用于确定酒水到底是什么实体。
+ * 准星指向隐形展示框（含 GlowItemFrame，即发光展示框）时，
+ * 在屏幕指定位置显示其承载物品名（带颜色）、可选完整 tooltip。
+ * 位置、大小、背景透明度、tooltip、颜色均可通过配置界面调整。
  */
 public class ItemFrameHudRenderer implements HudRenderCallback {
 
     private static final double SCAN_RADIUS = 3.0D;
     private static final double RAYCAST_DISTANCE = 8.0D;
-    private static final double DIAG_RADIUS = 20.0D;
-
-    private int diagTick = 0;
 
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
@@ -35,102 +35,72 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         if (client == null || client.player == null || client.world == null) {
             return;
         }
-
-        // 诊断：每 60 帧（约 3 秒）无条件发到聊天栏 + 屏幕
-        if (diagTick++ % 60 == 0) {
-            dumpEntities(client);
+        if (client.getDebugHud().shouldShowDebugHud()) {
+            return;
         }
-        renderEntityDiagnostic(drawContext, client);
 
-        // 正常功能
         PlayerEntity player = client.player;
         ItemFrameEntity target = findTargetItemFrame(client, player);
         if (target == null) {
             return;
         }
+
         ItemStack stack = target.getHeldItemStack();
         if (stack.isEmpty()) {
             return;
         }
-        String text = stack.getName().getString();
-        if (text == null || text.isEmpty()) {
-            return;
-        }
-        renderLabel(drawContext, client, text);
-    }
 
-    /** 无条件把周围实体发到聊天栏（一定能看到） */
-    private void dumpEntities(MinecraftClient client) {
+        // 安全获取配置
+        ModConfig cfg;
         try {
-            Vec3d cam = client.player.getEyePos();
-            Box box = new Box(
-                    cam.x - DIAG_RADIUS, cam.y - DIAG_RADIUS, cam.z - DIAG_RADIUS,
-                    cam.x + DIAG_RADIUS, cam.y + DIAG_RADIUS, cam.z + DIAG_RADIUS
-            );
-            List<Entity> entities = client.world.getEntitiesByClass(Entity.class, box, e -> e != client.player);
-            client.player.sendMessage(Text.literal("[诊断] 周围实体数: " + entities.size()), false);
-            int n = 0;
-            for (Entity e : entities) {
-                if (n >= 8) {
-                    client.player.sendMessage(Text.literal("[诊断] ... 还有 " + (entities.size() - 8) + " 个"), false);
-                    break;
-                }
-                String type = e.getType().toString();
-                String pos = (int) e.getX() + "," + (int) e.getY() + "," + (int) e.getZ();
-                String extra = "";
-                if (e instanceof ItemFrameEntity f) {
-                    ItemStack s = f.getHeldItemStack();
-                    extra = s.isEmpty() ? " 空框" : " 物品=" + s.getName().getString();
-                }
-                client.player.sendMessage(Text.literal("[诊断] " + type + " @" + pos + " inv=" + e.isInvisible() + extra), false);
-                n++;
-            }
+            cfg = ModConfig.get();
         } catch (Throwable t) {
-            client.player.sendMessage(Text.literal("[诊断] 出错: " + t.getMessage()), false);
+            cfg = null;
         }
-    }
 
-    /** 诊断：列出玩家周围 20 格内所有实体 */
-    private void renderEntityDiagnostic(DrawContext context, MinecraftClient client) {
-        Vec3d cam = client.player.getEyePos();
-        Box box = new Box(
-                cam.x - DIAG_RADIUS, cam.y - DIAG_RADIUS, cam.z - DIAG_RADIUS,
-                cam.x + DIAG_RADIUS, cam.y + DIAG_RADIUS, cam.z + DIAG_RADIUS
-        );
-
-        // 扫描所有实体类型
-        List<Entity> entities = client.world.getEntitiesByClass(Entity.class, box, e -> e != client.player);
+        boolean showTooltip = cfg != null && cfg.showTooltip;
+        boolean showColor = cfg == null || cfg.showColor;
 
         List<String> lines = new ArrayList<>();
-        lines.add("[诊断] 周围实体总数: " + entities.size());
-        int count = 0;
-        for (Entity e : entities) {
-            if (count >= 20) {
-                lines.add("... (还有更多)");
-                break;
+        try {
+            if (showTooltip) {
+                List<Text> tooltip = stack.getTooltip(
+                        net.minecraft.item.Item.TooltipContext.DEFAULT,
+                        client.player,
+                        net.minecraft.item.tooltip.TooltipType.BASIC
+                );
+                for (Text t : tooltip) {
+                    lines.add(toDisplay(t, showColor));
+                }
+            } else {
+                lines.add(toDisplay(stack.getName(), showColor));
             }
-            String type = e.getType().getName().getString();
-            String pos = (int) e.getX() + "," + (int) e.getY() + "," + (int) e.getZ();
-            String inv = e.isInvisible() ? "隐形" : "";
-            String extra = "";
-            if (e instanceof ItemFrameEntity f) {
-                ItemStack s = f.getHeldItemStack();
-                extra = s.isEmpty() ? "(空框)" : "物品=" + s.getName().getString();
-            }
-            lines.add(type + " @" + pos + " " + inv + " " + extra);
-            count++;
+        } catch (Throwable t) {
+            lines.clear();
+            lines.add(stack.getName().getString());
         }
 
-        int y = 15;
-        for (String line : lines) {
-            context.drawTextWithShadow(client.textRenderer, Text.literal(line), 5, y, 0x00FF00);
-            y += 11;
+        renderLabel(drawContext, client, lines, cfg);
+    }
+
+    /** 根据 showColor 决定是否还原颜色代码 */
+    private String toDisplay(Text text, boolean showColor) {
+        if (showColor) {
+            try {
+                String colored = TextSerializer.toLegacy(text);
+                if (colored != null && !colored.isEmpty()) {
+                    return colored;
+                }
+            } catch (Throwable ignored) {
+            }
         }
+        return text.getString();
     }
 
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
         HitResult hit = client.crosshairTarget;
 
+        // 情况 1：准星直接命中实体（对 GlowItemFrame 也有效，因为它是 ItemFrameEntity 子类）
         if (hit != null && hit.getType() == HitResult.Type.ENTITY) {
             Entity entity = ((EntityHitResult) hit).getEntity();
             if (entity instanceof ItemFrameEntity frame) {
@@ -138,6 +108,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             }
         }
 
+        // 情况 2：命中方块，在命中点附近找展示框
         if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
             Vec3d hitPos = hit.getPos();
             ItemFrameEntity nearby = findNearestItemFrame(client, hitPos);
@@ -146,6 +117,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             }
         }
 
+        // 情况 3：沿视线方向扫描
         return raycastForItemFrame(client, player);
     }
 
@@ -207,30 +179,49 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         return closest.distanceTo(entityPos);
     }
 
-    private void renderLabel(DrawContext context, MinecraftClient client, String text) {
-        int width = client.getWindow().getScaledWidth();
-        int height = client.getWindow().getScaledHeight();
+    /** 渲染带背景的标签，支持位置、透明度、多行 */
+    private void renderLabel(DrawContext context, MinecraftClient client, List<String> lines, ModConfig cfg) {
+        if (lines.isEmpty()) {
+            return;
+        }
 
-        int textWidth = client.textRenderer.getWidth(text);
-        int padding = 6;
-        int boxWidth = textWidth + padding * 2;
-        int boxHeight = client.textRenderer.fontHeight + padding * 2;
+        float scale = cfg != null ? cfg.labelScale : 1.0F;
+        int xPercent = cfg != null ? cfg.labelXPercent : 50;
+        int yPercent = cfg != null ? cfg.labelYPercent : 62;
+        int bgAlpha = cfg != null ? cfg.backgroundAlpha : 170;
 
-        int x = (width - boxWidth) / 2;
-        int y = (int) (height * 0.62) - boxHeight / 2;
+        int padding = (int) (6 * scale);
+        int lineHeight = client.textRenderer.fontHeight;
+        int lineSpacing = (int) (2 * scale);
 
-        context.fill(x, y, x + boxWidth, y + boxHeight, 0xAA000000);
-        context.fill(x, y, x + boxWidth, y + 1, 0xFFFFFFFF);
-        context.fill(x, y + boxHeight - 1, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
-        context.fill(x, y, x + 1, y + boxHeight, 0xFFFFFFFF);
-        context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFFFFFFFF);
+        int maxWidth = 0;
+        for (String line : lines) {
+            int w = client.textRenderer.getWidth(line);
+            if (w > maxWidth) {
+                maxWidth = w;
+            }
+        }
+        int boxWidth = maxWidth + padding * 2;
+        int boxHeight = lineHeight * lines.size() + lineSpacing * (lines.size() - 1) + padding * 2;
 
-        context.drawTextWithShadow(
-                client.textRenderer,
-                Text.literal(text),
-                x + padding,
-                y + padding,
-                0xFFFFFFFF
-        );
+        int screenWidth = client.getWindow().getScaledWidth();
+        int screenHeight = client.getWindow().getScaledHeight();
+        int x = (int) (screenWidth * xPercent / 100.0) - boxWidth / 2;
+        int y = (int) (screenHeight * yPercent / 100.0) - boxHeight / 2;
+
+        int bgColor = (bgAlpha << 24) | 0x000000;
+        context.fill(x, y, x + boxWidth, y + boxHeight, bgColor);
+
+        int textY = y + padding;
+        for (String line : lines) {
+            context.drawTextWithShadow(
+                    client.textRenderer,
+                    Text.literal(line),
+                    x + padding,
+                    textY,
+                    0xFFFFFFFF
+            );
+            textY += lineHeight + lineSpacing;
+        }
     }
 }
