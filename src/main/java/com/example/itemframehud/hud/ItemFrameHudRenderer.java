@@ -60,6 +60,7 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         lines.add(stack.getName());
 
         if (showTooltip) {
+            // 方式 1：尝试 getTooltip 的后续行
             try {
                 List<Text> tooltip = stack.getTooltip(
                         net.minecraft.item.Item.TooltipContext.DEFAULT,
@@ -70,7 +71,23 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                     lines.add(tooltip.get(i));
                 }
             } catch (Throwable t) {
-                // tooltip 失败就只用名字
+                // 忽略，走方式 2
+            }
+
+            // 方式 2：额外读取 LORE 组件，确保 lore 一定显示
+            try {
+                net.minecraft.component.type.LoreComponent lore =
+                        stack.get(net.minecraft.component.DataComponentTypes.LORE);
+                if (lore != null) {
+                    for (Text loreLine : lore.lines()) {
+                        // 避免和方式 1 重复（简单去重）
+                        if (!lines.contains(loreLine)) {
+                            lines.add(loreLine);
+                        }
+                    }
+                }
+            } catch (Throwable t) {
+                // 忽略
             }
         }
 
