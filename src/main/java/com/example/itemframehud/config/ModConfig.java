@@ -12,7 +12,6 @@ public class ModConfig implements ConfigData {
 
     /** 参照点：0=左上 1=上中 2=右上 3=左中 4=中心 5=右中 6=左下 7=下中 8=右下 */
     @ConfigEntry.BoundedDiscrete(min = 0, max = 8)
-    @ConfigEntry.Gui.EnumHandler(option = ConfigEntry.Gui.EnumHandler.EnumDisplayOption.BUTTON)
     public int anchor = 4;
 
     /** 相对参照点的水平偏移（像素，正数向右） */
