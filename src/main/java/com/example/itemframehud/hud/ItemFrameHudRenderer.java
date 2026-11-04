@@ -62,22 +62,32 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         boolean showColor = cfg == null || cfg.showColor;
 
         List<String> lines = new ArrayList<>();
+        // 第一行：名字（用最稳妥的方式获取文本）
+        String nameText;
         try {
-            if (showTooltip) {
+            nameText = showColor ? TextSerializer.toLegacy(stack.getName()) : stack.getName().getString();
+        } catch (Throwable t) {
+            nameText = stack.getName().getString();
+        }
+        if (nameText == null || nameText.isEmpty()) {
+            nameText = stack.getName().getString();
+        }
+        lines.add(nameText);
+
+        // 可选：追加完整 tooltip 的后续行（lore、属性等）
+        if (showTooltip) {
+            try {
                 List<Text> tooltip = stack.getTooltip(
                         net.minecraft.item.Item.TooltipContext.DEFAULT,
                         client.player,
                         net.minecraft.item.tooltip.TooltipType.BASIC
                 );
-                for (Text t : tooltip) {
-                    lines.add(toDisplay(t, showColor));
+                for (int i = 1; i < tooltip.size(); i++) {
+                    lines.add(toDisplay(tooltip.get(i), showColor));
                 }
-            } else {
-                lines.add(toDisplay(stack.getName(), showColor));
+            } catch (Throwable t) {
+                // tooltip 失败就只用名字，不影响显示
             }
-        } catch (Throwable t) {
-            lines.clear();
-            lines.add(stack.getName().getString());
         }
 
         renderLabel(drawContext, client, lines, cfg);
