@@ -27,6 +27,8 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
     private static final double RAYCAST_DISTANCE = 8.0D;
     private static final double DIAG_RADIUS = 20.0D;
 
+    private int diagTick = 0;
+
     @Override
     public void onHudRender(DrawContext drawContext, RenderTickCounter tickCounter) {
         MinecraftClient client = MinecraftClient.getInstance();
@@ -34,7 +36,10 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
 
-        // 诊断：无条件显示周围所有实体（放在最前面，一定能执行）
+        // 诊断：每 60 帧（约 3 秒）无条件发到聊天栏 + 屏幕
+        if (diagTick++ % 60 == 0) {
+            dumpEntities(client);
+        }
         renderEntityDiagnostic(drawContext, client);
 
         // 正常功能
@@ -52,6 +57,37 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
             return;
         }
         renderLabel(drawContext, client, text);
+    }
+
+    /** 无条件把周围实体发到聊天栏（一定能看到） */
+    private void dumpEntities(MinecraftClient client) {
+        try {
+            Vec3d cam = client.player.getEyePos();
+            Box box = new Box(
+                    cam.x - DIAG_RADIUS, cam.y - DIAG_RADIUS, cam.z - DIAG_RADIUS,
+                    cam.x + DIAG_RADIUS, cam.y + DIAG_RADIUS, cam.z + DIAG_RADIUS
+            );
+            List<Entity> entities = client.world.getEntitiesByClass(Entity.class, box, e -> e != client.player);
+            client.player.sendMessage(Text.literal("[诊断] 周围实体数: " + entities.size()), false);
+            int n = 0;
+            for (Entity e : entities) {
+                if (n >= 8) {
+                    client.player.sendMessage(Text.literal("[诊断] ... 还有 " + (entities.size() - 8) + " 个"), false);
+                    break;
+                }
+                String type = e.getType().toString();
+                String pos = (int) e.getX() + "," + (int) e.getY() + "," + (int) e.getZ();
+                String extra = "";
+                if (e instanceof ItemFrameEntity f) {
+                    ItemStack s = f.getHeldItemStack();
+                    extra = s.isEmpty() ? " 空框" : " 物品=" + s.getName().getString();
+                }
+                client.player.sendMessage(Text.literal("[诊断] " + type + " @" + pos + " inv=" + e.isInvisible() + extra), false);
+                n++;
+            }
+        } catch (Throwable t) {
+            client.player.sendMessage(Text.literal("[诊断] 出错: " + t.getMessage()), false);
+        }
     }
 
     /** 诊断：列出玩家周围 20 格内所有实体 */
