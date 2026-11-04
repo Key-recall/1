@@ -60,6 +60,9 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
         lines.add(stack.getName());
 
         if (showTooltip) {
+            // 诊断：打印 tooltip 和组件信息（临时）
+            dumpStackInfo(client, stack);
+
             // 方式 1：尝试 getTooltip 的后续行
             try {
                 List<Text> tooltip = stack.getTooltip(
@@ -71,27 +74,52 @@ public class ItemFrameHudRenderer implements HudRenderCallback {
                     lines.add(tooltip.get(i));
                 }
             } catch (Throwable t) {
-                // 忽略，走方式 2
             }
 
-            // 方式 2：额外读取 LORE 组件，确保 lore 一定显示
+            // 方式 2：额外读取 LORE 组件
             try {
                 net.minecraft.component.type.LoreComponent lore =
                         stack.get(net.minecraft.component.DataComponentTypes.LORE);
                 if (lore != null) {
                     for (Text loreLine : lore.lines()) {
-                        // 避免和方式 1 重复（简单去重）
                         if (!lines.contains(loreLine)) {
                             lines.add(loreLine);
                         }
                     }
                 }
             } catch (Throwable t) {
-                // 忽略
             }
         }
 
         renderLabel(drawContext, client, lines, cfg);
+    }
+
+    private int dumpTick = 0;
+
+    /** 临时诊断：打印物品的 tooltip 和 name 结构到聊天栏 */
+    private void dumpStackInfo(MinecraftClient client, ItemStack stack) {
+        if (dumpTick++ % 60 != 0) {
+            return;
+        }
+        try {
+            // 打印名字的完整结构（含 siblings 数量）
+            Text name = stack.getName();
+            client.player.sendMessage(Text.literal("[诊断] 名字: '" + name.getString() + "' siblings=" + name.getSiblings().size()), false);
+
+            // 打印 tooltip 行数和内容
+            List<Text> tooltip = stack.getTooltip(
+                    net.minecraft.item.Item.TooltipContext.DEFAULT,
+                    client.player,
+                    net.minecraft.item.tooltip.TooltipType.BASIC
+            );
+            client.player.sendMessage(Text.literal("[诊断] tooltip 共 " + tooltip.size() + " 行:"), false);
+            for (int i = 0; i < tooltip.size() && i < 10; i++) {
+                client.player.sendMessage(Text.literal("[诊断]   [" + i + "] " + tooltip.get(i).getString()), false);
+            }
+        } catch (Throwable t) {
+            client.player.sendMessage(Text.literal("[诊断] 失败: " + t.getClass().getSimpleName() + ": " + t.getMessage()), false);
+        }
+    }
     }
 
     private ItemFrameEntity findTargetItemFrame(MinecraftClient client, PlayerEntity player) {
